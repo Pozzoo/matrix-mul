@@ -1,0 +1,55 @@
+services:
+  frontend:
+    build: .
+    container_name: mm_frontend
+    hostname: frontend
+    environment:
+      - MODE=mpi
+      - DATA_DIR=/data
+      - NUM_PROCS=3
+      - THREADS=4
+    volumes:
+      - ./matrices:/data:rw
+    networks:
+      - mpinet
+    depends_on:
+      - worker
+
+  worker:
+    build: .
+    container_name: mm_worker
+    hostname: worker
+    environment:
+      - MODE=mpi
+      - DATA_DIR=/data
+    volumes:
+      - ./matrices:/data:rw
+    networks:
+      - mpinet
+
+  linear:
+    build: .
+    container_name: mm_linear
+    environment:
+      - MODE=linear
+      - DATA_DIR=/data
+    volumes:
+      - ./matrices:/data:rw
+    networks:
+      - mpinet
+
+  mt:
+    build: .
+    container_name: mm_mt
+    environment:
+      - MODE=mt
+      - DATA_DIR=/data
+      - THREADS=16
+    volumes:
+      - ./matrices:/data:rw
+    networks:
+      - mpinet
+
+networks:
+  mpinet:
+    driver: bridge
