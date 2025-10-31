@@ -54,13 +54,13 @@ build_hostfile() {
 
 if [ "$MODE" = "linear" ]; then
   echo "[entry] running linear mode"
-  "$APP_BIN" --mode linear --data "$DATA_DIR" --n "$N"
+  "$APP_BIN" --mode linear --data "$DATA_DIR"
   exit 0
 fi
 
 if [ "$MODE" = "mt" ]; then
-  echo "[entry] running multithreaded mode (threads=${THREADS})"
-  "$APP_BIN" --mode mt --data "$DATA_DIR" --threads "$THREADS" --n "$N"
+  echo "[entry] running multithreaded mode"
+  "$APP_BIN" --mode mt --data "$DATA_DIR"
   exit 0
 fi
 

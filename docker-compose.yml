@@ -7,7 +7,6 @@ services:
       - MODE=mpi
       - DATA_DIR=/data
       - NUM_PROCS=3
-      - THREADS=4
     volumes:
       - ./matrices:/data:rw
     networks:
@@ -44,7 +43,6 @@ services:
     environment:
       - MODE=mt
       - DATA_DIR=/data
-      - THREADS=16
     volumes:
       - ./matrices:/data:rw
     networks:
