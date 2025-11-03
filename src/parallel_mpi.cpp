@@ -1,14 +1,15 @@
+#include <chrono>
 #include <mpi.h>
 #include <vector>
 #include <iostream>
 #include "io_utils.h"
-#include "linear.h"
+#include "multithreaded.h"
 
 using Matrix = std::vector<double>;
 
 // Master-worker MPI: master (rank 0) reads matA and matB from /data and writes matC to /data
 
-void matmul_mpi_distributed(const std::string& data_dir) {
+void matmul_mpi_distributed(const std::string& data_dir, const int num_threads) {
     int rank, size;
 
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -39,6 +40,8 @@ void matmul_mpi_distributed(const std::string& data_dir) {
             std::cerr << "[mpi-master] dimension mismatch\n";
             return;
         }
+
+        const auto t0 = std::chrono::high_resolution_clock::now();
 
         int n = nA;
         C.assign(n*n, 0.0);
@@ -78,6 +81,11 @@ void matmul_mpi_distributed(const std::string& data_dir) {
             offset += rows;
         }
 
+        const auto t1 = std::chrono::high_resolution_clock::now();
+        const std::chrono::duration<long double> dt = t1 - t0;
+
+        std::cout << "[mpi-master] n=" << n << " workers=" << workers << " time=" << dt.count() << "s\n";
+
         // write matC
         if (const std::string out = data_dir + "/matC.txt"; !write_square_matrix(out, C, n)) {
             std::cerr << "[mpi-master] failed to write " << out << "\n";
@@ -103,7 +111,7 @@ void matmul_mpi_distributed(const std::string& data_dir) {
 
         Matrix Cblock(count);
         if (count > 0)
-            matmul_linear(Ablock, B, Cblock, n);
+            matmul_mt(Ablock, B, Cblock, n, num_threads);
 
         // send back rows and result
         MPI_Send(&rows, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);

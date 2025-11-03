@@ -10,7 +10,7 @@
 #include "multithreaded.h"
 
 // declare MPI wrapper
-void matmul_mpi_distributed(const std::string& data_dir);
+void matmul_mpi_distributed(const std::string& data_dir, int num_threads);
 
 using Matrix = std::vector<double>;
 
@@ -39,7 +39,7 @@ int main(int argc, char** argv) {
             matmul_linear(A,B,C,nread);
 
             auto t1 = std::chrono::high_resolution_clock::now();
-            std::chrono::duration<double> dt = t1 - t0;
+            std::chrono::duration<long double> dt = t1 - t0;
 
             std::cout << "[linear] n=" << nread <<" time=" << dt.count() << "s\n";
 
@@ -56,7 +56,7 @@ int main(int argc, char** argv) {
 
     if (mode == "mpi") {
         MPI_Init(&argc, &argv);
-        matmul_mpi_distributed(data_dir);
+        matmul_mpi_distributed(data_dir, static_cast<int>(processor_count));
         MPI_Finalize();
         return 0;
     }
@@ -77,7 +77,7 @@ int main(int argc, char** argv) {
             matmul_mt(A,B,C,nread, static_cast<int>(processor_count));
 
             auto t1 = std::chrono::high_resolution_clock::now();
-            std::chrono::duration<double> dt = t1 - t0;
+            std::chrono::duration<long double> dt = t1 - t0;
 
             std::cout << "[mt] n=" << nread << " threads=" << processor_count << " time=" << dt.count() << "s\n";
 
