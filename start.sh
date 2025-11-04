@@ -49,7 +49,7 @@ discover_workers() {
 
   # Start listener before sending
   (
-    timeout 3 socat -u UDP4-RECVFROM:"$port",INTERFACE="$iface" - >"$tmpfile" 2>/dev/null
+    timeout 20 socat -u UDP4-RECVFROM:"$port",INTERFACE="$iface" - >"$tmpfile" 2>/dev/null
   ) &
 
   sleep 0.3
@@ -62,8 +62,8 @@ discover_workers() {
 
   echo "[discovery] received replies:" >&2
   if [ -s "$tmpfile" ]; then
-    cat "$tmpfile" >&2
-    awk '/^WORKER / {print $2}' "$tmpfile" | sort -u
+    awk -v self="$frontend_ip" '$2 != self' "$tmpfile" >&2
+    awk -v self="$frontend_ip" '/^DISCOVER_MATRIX_WORKER / && $2 != self {print $2}' "$tmpfile" | sort -u
   else
     echo "[discovery] no replies received" >&2
   fi
@@ -78,7 +78,7 @@ build_hostfile() {
   echo "$frontend_ip" >> "$hf"
 
   if [ "${DISCOVERY:-0}" = "1" ]; then
-    (discover_workers) 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' >> "$hf"
+    discover_workers | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' >> "$hf"
   elif getent ahosts worker >/dev/null 2>&1; then
     getent ahosts worker | awk '{print $1}' | uniq >> "$hf"
   fi
@@ -128,20 +128,19 @@ if [ "${DISCOVERY:-0}" = "1" ]; then
   cat > "$responder_script" <<'EOF'
 #!/usr/bin/env bash
 set +u  # disable unbound variable errors here
-read msg
+msg=$(cat)  # read entire datagram from stdin
 if echo "$msg" | grep -q "^DISCOVER_MATRIX_WORKER"; then
   sender_ip=$(echo "$msg" | awk '{print $2}')
   my_ip=$(hostname -I | awk '{print $1}')
   echo "[entry] worker: replying to $sender_ip with my IP $my_ip" >&2
-  echo "WORKER $my_ip" | socat -u - UDP4-DATAGRAM:"$sender_ip":4000,INTERFACE=eth0
+  echo "WORKER $my_ip" | socat -u - UDP4-DATAGRAM:"$sender_ip":4000,sourceport=4000,INTERFACE=eth0,reuseaddr
 fi
 EOF
   chmod +x "$responder_script"
 
   # Now start socat using the script
-  socat -u UDP4-RECVFROM:"$port",reuseaddr,so-broadcast,INTERFACE="${iface}" SYSTEM:"$responder_script" &
+  socat -u UDP4-RECVFROM:"$port",reuseaddr,broadcast,INTERFACE="${iface}" SYSTEM:"$responder_script" &
 fi
-
 
 
 tail -f /dev/null
