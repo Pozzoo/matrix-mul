@@ -15,7 +15,6 @@ if [ ! -f "$SSH_DIR/id_rsa" ]; then
 fi
 
 # start sshd
-# minimal sshd config adjustments for dev: permit root login via key
 mkdir -p /run/sshd
 if ! grep -q '^PermitRootLogin' /etc/ssh/sshd_config 2>/dev/null; then
   echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config
@@ -25,7 +24,7 @@ fi
 $SSHD
 
 # env defaults
-MODE=${MODE:-mpi}         # linear | mt | mpi (frontend spawns mpiexec)
+MODE=${MODE:-mpi}         # linear | mt | mpi
 DATA_DIR=${DATA_DIR:-/data}
 NUM_PROCS=${NUM_PROCS:-3}
 THREADS=${THREADS:-4}
@@ -39,25 +38,26 @@ discover_workers() {
   local port=${DISCOVERY_PORT:-4000}
   local tmpfile
   tmpfile=$(mktemp)
-  local frontend_ip
 
+  local frontend_ip iface
   frontend_ip=$(hostname -I | awk '{print $1}')
-  echo "[discovery] frontend IP: $frontend_ip" >&2
+  iface=$(ip route | awk '/default/ {print $5; exit}')
 
-  # Start listening BEFORE sending (in background)
+  echo "[discovery] frontend IP: $frontend_ip" >&2
+  echo "[discovery] using interface: $iface" >&2
   echo "[discovery] starting listener on UDP port $port..." >&2
+
+  # Start listener before sending
   (
-    # Listen for up to 3 seconds and write to tmpfile
-    timeout 3 sh -c "nc -u -l -p $port >'$tmpfile' 2>/dev/null"
+    timeout 3 socat -u UDP4-RECVFROM:"$port",INTERFACE="$iface" - >"$tmpfile" 2>/dev/null
   ) &
 
   sleep 0.3
 
   # Broadcast discovery packet
   echo "[discovery] broadcasting discovery packet on 192.168.0.255:$port" >&2
-  echo "DISCOVER_MATRIX_WORKER $frontend_ip" > /dev/udp/192.168.0.255/"$port" >/dev/null 2>&1 || true
+  socat -T1 -u - UDP4-DATAGRAM:192.168.0.255:"$port",broadcast,INTERFACE="$iface" <<< "DISCOVER_MATRIX_WORKER $frontend_ip" >/dev/null 2>&1 || true
 
-  # Wait for listener to finish
   wait || true
 
   echo "[discovery] received replies:" >&2
@@ -69,18 +69,16 @@ discover_workers() {
   fi
 }
 
-# build a hostfile: include localhost and resolve 'worker' DNS or discovery
+# build a hostfile
 build_hostfile() {
   hf=/tmp/hostfile
   : > "$hf"
 
-  # Get frontend’s own reachable IP
   frontend_ip=$(hostname -I | awk '{print $1}')
   echo "$frontend_ip" >> "$hf"
 
   if [ "${DISCOVERY:-0}" = "1" ]; then
-      # Only append valid IPs (suppress debug output)
-      (discover_workers) 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' >> "$hf"
+    (discover_workers) 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' >> "$hf"
   elif getent ahosts worker >/dev/null 2>&1; then
     getent ahosts worker | awk '{print $1}' | uniq >> "$hf"
   fi
@@ -88,7 +86,7 @@ build_hostfile() {
   echo "$hf"
 }
 
-
+# ---- Execution modes ----
 if [ "$MODE" = "linear" ]; then
   echo "[entry] running linear mode"
   "$APP_BIN" --mode linear --data "$DATA_DIR"
@@ -101,41 +99,40 @@ if [ "$MODE" = "mt" ]; then
   exit 0
 fi
 
-# MPI mode: only frontend launches mpiexec; workers keep sshd alive for mpiexec to ssh into
 if [ "$hostname" = "frontend" ] && [ "$MODE" = "mpi" ]; then
   echo "[entry] frontend: waiting ${SLEEP_BEFORE_MPIRUN}s for workers to register"
   sleep "$SLEEP_BEFORE_MPIRUN"
+
   HF="$(build_hostfile)"
   echo "[entry] hostfile:"
   cat "$HF"
   NUM_HOSTS=$(wc -l < "$HF")
+
   echo "[entry] launching mpiexec -f $HF -np $NUM_HOSTS ${APP_BIN} --mode mpi --data ${DATA_DIR}"
   mpiexec -f "$HF" -np "$NUM_HOSTS" "$APP_BIN" --mode mpi --data "${DATA_DIR}"
+
   echo "[entry] mpiexec finished"
   sleep 1
   exit 0
 fi
 
-# workers or non-frontend in MPI mode: keep sshd running so frontend's mpiexec can ssh here
+# Worker containers
 echo "[entry] worker container: sshd running; awaiting mpiexec from frontend"
 
-# worker: reply to UDP discovery packets if DISCOVERY=1
 if [ "${DISCOVERY:-0}" = "1" ]; then
   port=${DISCOVERY_PORT:-4000}
-  echo "[entry] worker: starting UDP discovery responder on port $port"
+  iface=$(ip route | awk '/default/ {print $5; exit}')
+  echo "[entry] worker: starting UDP discovery responder on $iface:$port"
 
   while true; do
-    # Read 1 datagram (timeout 3 s)
-    if read -r -t 3 msg < <(cat < /dev/udp/0.0.0.0/$port 2>/dev/null); then
-      if [[ "$msg" == DISCOVER_MATRIX_WORKER* ]]; then
-        sender_ip="${msg##* }"  # assuming frontend sends its IP at end
-        my_ip=$(hostname -I | awk '{print $1}')
-        echo "[entry] worker: replying to $sender_ip with my IP $my_ip"
-        echo "WORKER $my_ip" > /dev/udp/$sender_ip/$port
-      fi
+    msg=$(timeout 3 socat -u UDP4-RECVFROM:"$port",INTERFACE="$iface" - 2>/dev/null | head -n1)
+    if [[ "$msg" == DISCOVER_MATRIX_WORKER* ]]; then
+      sender_ip=$(echo "$msg" | awk '{print $2}')
+      my_ip=$(hostname -I | awk '{print $1}')
+      echo "[entry] worker: replying to $sender_ip with my IP $my_ip"
+      socat -T1 -u - UDP4-DATAGRAM:"$sender_ip":"$port",INTERFACE="$iface" <<< "WORKER $my_ip"
     fi
   done &
 fi
-
 
 tail -f /dev/null
