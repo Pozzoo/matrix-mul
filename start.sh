@@ -122,17 +122,20 @@ echo "[entry] worker container: sshd running; awaiting mpiexec from frontend"
 if [ "${DISCOVERY:-0}" = "1" ]; then
   port=${DISCOVERY_PORT:-4000}
   iface=$(ip route | awk '/default/ {print $5; exit}')
-  echo "[entry] worker: starting UDP discovery responder on $iface:$port"
+  echo "[entry] worker: listening for discovery on $iface:$port"
 
-  while true; do
-    msg=$(timeout 3 socat -u UDP4-RECVFROM:"$port",INTERFACE="$iface" - 2>/dev/null | head -n1)
-    if [[ "$msg" == DISCOVER_MATRIX_WORKER* ]]; then
-      sender_ip=$(echo "$msg" | awk '{print $2}')
-      my_ip=$(hostname -I | awk '{print $1}')
-      echo "[entry] worker: replying to $sender_ip with my IP $my_ip"
-      socat -T1 -u - UDP4-DATAGRAM:"$sender_ip":"$port",INTERFACE="$iface" <<< "WORKER $my_ip"
+  # Wait for interface to be ready
+  sleep 1
+
+  socat -u UDP4-RECVFROM:"$port",reuseaddr,so-broadcast,INTERFACE="$iface" SYSTEM:"bash -c '
+    read msg
+    if echo \"\$msg\" | grep -q \"^DISCOVER_MATRIX_WORKER\"; then
+      sender_ip=\$(echo \"\$msg\" | awk \"{print \\$2}\")
+      my_ip=\$(hostname -I | awk \"{print \\$1}\")
+      echo \"[entry] worker: replying to \$sender_ip with my IP \$my_ip\" >&2
+      echo \"WORKER \$my_ip\" | socat -u - UDP4-DATAGRAM:\"\$sender_ip\":\"$port\",INTERFACE=\"$iface\"
     fi
-  done &
+  '" &
 fi
 
 tail -f /dev/null
