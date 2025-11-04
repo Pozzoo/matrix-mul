@@ -39,17 +39,35 @@ discover_workers() {
   local port=${DISCOVERY_PORT:-4000}
   local tmpfile
   tmpfile=$(mktemp)
+  local frontend_ip
 
-  echo "[discovery] broadcasting on UDP port $port..." >&2
-  (echo "DISCOVER_MATRIX_WORKER" | nc -w1 -b 255.255.255.255 "$port" >/dev/null 2>&1) &
+  frontend_ip=$(hostname -I | awk '{print $1}')
+  echo "[discovery] frontend IP: $frontend_ip" >&2
 
-  timeout 2 nc -lu -p "$port" > "$tmpfile" 2>/dev/null || true
+  # Start listening BEFORE sending (in background)
+  echo "[discovery] starting listener on UDP port $port..." >&2
+  (
+    # Listen for up to 3 seconds and write to tmpfile
+    timeout 3 sh -c "nc -u -l -p $port >'$tmpfile' 2>/dev/null"
+  ) &
+
+  sleep 0.3
+
+  # Broadcast discovery packet
+  echo "[discovery] broadcasting discovery packet on 192.168.0.255:$port" >&2
+  echo "DISCOVER_MATRIX_WORKER $frontend_ip" | nc -u -w1 -b 192.168.0.255 "$port" >/dev/null 2>&1 || true
+
+  # Wait for listener to finish
+  wait || true
 
   echo "[discovery] received replies:" >&2
-  cat "$tmpfile" >&2
-  awk '/^WORKER / {print $2}' "$tmpfile" | sort -u
+  if [ -s "$tmpfile" ]; then
+    cat "$tmpfile" >&2
+    awk '/^WORKER / {print $2}' "$tmpfile" | sort -u
+  else
+    echo "[discovery] no replies received" >&2
+  fi
 }
-
 
 # build a hostfile: include localhost and resolve 'worker' DNS or discovery
 build_hostfile() {
@@ -62,10 +80,10 @@ build_hostfile() {
 
   if [ "${DISCOVERY:-0}" = "1" ]; then
       # Only append valid IPs (suppress debug output)
-      discover_workers 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' >> "$hf"
-    elif getent ahosts worker >/dev/null 2>&1; then
-      getent ahosts worker | awk '{print $1}' | uniq >> "$hf"
-    fi
+      (discover_workers) 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' >> "$hf"
+  elif getent ahosts worker >/dev/null 2>&1; then
+    getent ahosts worker | awk '{print $1}' | uniq >> "$hf"
+  fi
 
   echo "$hf"
 }
@@ -105,17 +123,18 @@ echo "[entry] worker container: sshd running; awaiting mpiexec from frontend"
 if [ "${DISCOVERY:-0}" = "1" ]; then
   port=${DISCOVERY_PORT:-4000}
   echo "[entry] worker: starting UDP discovery responder on port $port"
-  (
-    while true; do
-      msg=$(nc -lu -p "$port" -w1 2>/dev/null || true)
-      if [ "$msg" = "DISCOVER_MATRIX_WORKER" ]; then
-        ip=$(hostname -I | awk '{print $1}')
-        # send back to broadcast address (so frontend receives)
-        echo "WORKER $ip" | nc -w1 -u 255.255.255.255 "$port" >/dev/null 2>&1
-        echo "found frontend"
-      fi
-    done
-  ) &
+
+  while true; do
+    # Receive one message, capture sender IP
+    msg_and_ip=$(timeout 3 nc -u -l -p "$port" -v 2>&1 || true)
+    sender_ip=$(echo "$msg_and_ip" | grep "Connection from" | awk '{print $3}' | cut -d'.' -f1-4)
+
+    if echo "$msg_and_ip" | grep -q "DISCOVER_MATRIX_WORKER"; then
+      ip=$(hostname -I | awk '{print $1}')
+      echo "[entry] worker: replying to $sender_ip with my IP $ip"
+      echo "WORKER $ip" | nc -u -w1 "$sender_ip" "$port"
+    fi
+  done &
 fi
 
 tail -f /dev/null
