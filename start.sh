@@ -55,7 +55,7 @@ discover_workers() {
 
   # Broadcast discovery packet
   echo "[discovery] broadcasting discovery packet on 192.168.0.255:$port" >&2
-  echo "DISCOVER_MATRIX_WORKER $frontend_ip" | nc -u -w1 -b 192.168.0.255 "$port" >/dev/null 2>&1 || true
+  echo "DISCOVER_MATRIX_WORKER $frontend_ip" > /dev/udp/192.168.0.255/"$port" >/dev/null 2>&1 || true
 
   # Wait for listener to finish
   wait || true
@@ -125,16 +125,17 @@ if [ "${DISCOVERY:-0}" = "1" ]; then
   echo "[entry] worker: starting UDP discovery responder on port $port"
 
   while true; do
-    # Receive one message, capture sender IP
-    msg_and_ip=$(timeout 3 nc -u -l -p "$port" -v 2>&1 || true)
-    sender_ip=$(echo "$msg_and_ip" | grep "Connection from" | awk '{print $3}' | cut -d'.' -f1-4)
-
-    if echo "$msg_and_ip" | grep -q "DISCOVER_MATRIX_WORKER"; then
-      ip=$(hostname -I | awk '{print $1}')
-      echo "[entry] worker: replying to $sender_ip with my IP $ip"
-      echo "WORKER $ip" | nc -u -w1 "$sender_ip" "$port"
+    # Read 1 datagram (timeout 3 s)
+    if read -r -t 3 msg < <(cat < /dev/udp/0.0.0.0/$port 2>/dev/null); then
+      if [[ "$msg" == DISCOVER_MATRIX_WORKER* ]]; then
+        sender_ip="${msg##* }"  # assuming frontend sends its IP at end
+        my_ip=$(hostname -I | awk '{print $1}')
+        echo "[entry] worker: replying to $sender_ip with my IP $my_ip"
+        echo "WORKER $my_ip" > /dev/udp/$sender_ip/$port
+      fi
     fi
   done &
 fi
+
 
 tail -f /dev/null
