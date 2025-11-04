@@ -120,22 +120,28 @@ fi
 echo "[entry] worker container: sshd running; awaiting mpiexec from frontend"
 
 if [ "${DISCOVERY:-0}" = "1" ]; then
-  port=${DISCOVERY_PORT:-4000}
-  iface=$(ip route | awk '/default/ {print $5; exit}')
-  echo "[entry] worker: listening for discovery on $iface:$port"
+  port=4000
+  iface=eth0
+  echo "[entry] worker: starting UDP discovery responder on ${iface}:${port}"
 
-  # Wait for interface to be ready
-  sleep 1
-
-  socat -u UDP4-RECVFROM:"$port",reuseaddr,so-broadcast,INTERFACE="$iface" SYSTEM:"bash -c '
-    read msg
-    if echo \"\$msg\" | grep -q \"^DISCOVER_MATRIX_WORKER\"; then
-      sender_ip=\$(echo \"\$msg\" | awk \"{print \\$2}\")
-      my_ip=\$(hostname -I | awk \"{print \\$1}\")
-      echo \"[entry] worker: replying to \$sender_ip with my IP \$my_ip\" >&2
-      echo \"WORKER \$my_ip\" | socat -u - UDP4-DATAGRAM:\"\$sender_ip\":\"$port\",INTERFACE=\"$iface\"
-    fi
-  '" &
+  responder_script=$(mktemp)
+  cat > "$responder_script" <<'EOF'
+#!/usr/bin/env bash
+set +u  # disable unbound variable errors here
+read msg
+if echo "$msg" | grep -q "^DISCOVER_MATRIX_WORKER"; then
+  sender_ip=$(echo "$msg" | awk '{print $2}')
+  my_ip=$(hostname -I | awk '{print $1}')
+  echo "[entry] worker: replying to $sender_ip with my IP $my_ip" >&2
+  echo "WORKER $my_ip" | socat -u - UDP4-DATAGRAM:"$sender_ip":4000,INTERFACE=eth0
 fi
+EOF
+  chmod +x "$responder_script"
+
+  # Now start socat using the script
+  socat -u UDP4-RECVFROM:"$port",reuseaddr,so-broadcast,INTERFACE="${iface}" SYSTEM:"$responder_script" &
+fi
+
+
 
 tail -f /dev/null
