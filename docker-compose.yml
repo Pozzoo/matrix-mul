@@ -2,11 +2,10 @@ services:
   frontend:
     build: .
     container_name: mm_frontend
-    hostname: frontend
     network_mode: "host"            #uncomment for multi-machine (true distributed)
     environment:
       - DISCOVERY=1
-      - MODE=mpi
+      - MODE=frontend
       - DATA_DIR=/data
       - NUM_PROCS=3
     volumes:
@@ -17,11 +16,10 @@ services:
   worker:
     build: .
     container_name: mm_worker
-    hostname: worker
     network_mode: "host"            #uncomment for multi-machine (true distributed)
     environment:
       - DISCOVERY=1
-      - MODE=mpi
+      - MODE=worker
       - DATA_DIR=/data
    # networks:                     #comment for multi-machine (true distributed)
    #   - matrixnet

@@ -27,15 +27,12 @@ $SSHD
 MODE=${MODE:-mpi}         # linear | mt | mpi
 DATA_DIR=${DATA_DIR:-/data}
 NUM_PROCS=${NUM_PROCS:-3}
-THREADS=${THREADS:-4}
-N=${N:-200}
 SLEEP_BEFORE_MPIRUN=${SLEEP_BEFORE_MPIRUN:-1}
-
-hostname="$(hostname)"
 
 # discover workers via UDP broadcast
 discover_workers() {
   local port=${DISCOVERY_PORT:-4000}
+  local wait_secs=${DISCOVERY_TIMEOUT:-10}   # change default wait time here
   local tmpfile
   tmpfile=$(mktemp)
 
@@ -45,28 +42,51 @@ discover_workers() {
 
   echo "[discovery] frontend IP: $frontend_ip" >&2
   echo "[discovery] using interface: $iface" >&2
-  echo "[discovery] starting listener on UDP port $port..." >&2
+  echo "[discovery] starting listener on UDP port $port for ${wait_secs}s..." >&2
 
-  # Start listener before sending
-  (
-    timeout 20 socat -u UDP4-RECVFROM:"$port",INTERFACE="$iface" - >"$tmpfile" 2>/dev/null
-  ) &
+  # Start socat in its own session so we can always kill it reliably later.
+  # We append replies to tmpfile (one datagram per line).
+  setsid sh -c "while :; do socat -u - UDP4-RECVFROM:${port},reuseaddr,broadcast,INTERFACE=${iface} - 2>/dev/null >>'${tmpfile}'; done" &
+  listener_pid=$!
 
-  sleep 0.3
+  # Give listener a moment to bind
+  sleep 0.2
 
-  # Broadcast discovery packet
   echo "[discovery] broadcasting discovery packet on 192.168.0.255:$port" >&2
-  socat -T1 -u - UDP4-DATAGRAM:192.168.0.255:"$port",broadcast,INTERFACE="$iface" <<< "DISCOVER_MATRIX_WORKER $frontend_ip" >/dev/null 2>&1 || true
+  # send our own IP so workers can reply
+  socat -T1 -u - UDP4-DATAGRAM:192.168.0.255:"${port}",broadcast,INTERFACE="${iface}" <<< "DISCOVER_MATRIX_WORKER ${frontend_ip}" >/dev/null 2>&1 || true
 
-  wait || true
+  # Wait explicitly the desired amount of time for replies to arrive
+  sleep "${wait_secs}"
 
-  echo "[discovery] received replies:" >&2
-  if [ -s "$tmpfile" ]; then
-    awk -v self="$frontend_ip" '$2 != self' "$tmpfile" >&2
-    awk -v self="$frontend_ip" '/^DISCOVER_MATRIX_WORKER / && $2 != self {print $2}' "$tmpfile" | sort -u
+  # Cleanly kill the listener session (kill the whole process group)
+  if kill -0 "$listener_pid" 2>/dev/null; then
+    # negative PID kills process group started by setsid
+    pgid=$(ps -o pgid= -p "$listener_pid" | tr -d ' ')
+    if [ -n "$pgid" ]; then
+      kill -TERM -"${pgid}" 2>/dev/null || true
+    else
+      kill -TERM "$listener_pid" 2>/dev/null || true
+    fi
+  fi
+
+  # Wait for listener to exit
+  wait "$listener_pid" 2>/dev/null || true
+
+  echo "[discovery] checking replies..." >&2
+
+  # Filter out self-echo, print workers if present
+  workers=$(awk -v self="$frontend_ip" '/^DISCOVER_MATRIX_WORKER / && $2 != self {print $2}' "$tmpfile" | sort -u)
+
+  if [ -n "$workers" ]; then
+    echo "[discovery] received replies:" >&2
+    echo "$workers" >&2
+    printf '%s\n' "$workers"
   else
     echo "[discovery] no replies received" >&2
   fi
+
+  rm -f "$tmpfile" 2>/dev/null || true
 }
 
 # build a hostfile
@@ -99,7 +119,7 @@ if [ "$MODE" = "mt" ]; then
   exit 0
 fi
 
-if [ "$hostname" = "frontend" ] && [ "$MODE" = "mpi" ]; then
+if [ "$MODE" = "frontend" ]; then
   echo "[entry] frontend: waiting ${SLEEP_BEFORE_MPIRUN}s for workers to register"
   sleep "$SLEEP_BEFORE_MPIRUN"
 
