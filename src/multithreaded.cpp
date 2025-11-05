@@ -8,7 +8,7 @@
 static void worker_range(const DMatrix &A, const DMatrix &B, DMatrix &C, const int n, const int r0, const int r1) {
     for (int i = r0; i < r1; i++) {
         for (int k = 0; k < n; k++) {
-            const long double a = A[i*n + k];
+            const double a = A[i*n + k];
             for (int j = 0; j < n; j++) {
                 C[i*n + j] += a * B[k*n + j];
             }

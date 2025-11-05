@@ -36,7 +36,7 @@ int main(int argc, char** argv) {
             matmul_linear(A,B,C,nread);
 
             auto t1 = std::chrono::high_resolution_clock::now();
-            std::chrono::duration<long double> dt = t1 - t0;
+            std::chrono::duration<double> dt = t1 - t0;
 
             std::cout << "[linear] n=" << nread <<" time=" << dt.count() << "s\n";
 
@@ -74,7 +74,7 @@ int main(int argc, char** argv) {
             matmul_mt(A,B,C,nread, static_cast<int>(processor_count));
 
             auto t1 = std::chrono::high_resolution_clock::now();
-            std::chrono::duration<long double> dt = t1 - t0;
+            std::chrono::duration<double> dt = t1 - t0;
 
             std::cout << "[mt] n=" << nread << " threads=" << processor_count << " time=" << dt.count() << "s\n";
 

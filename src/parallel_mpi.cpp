@@ -47,7 +47,7 @@ void matmul_mpi_distributed(const std::string& data_dir, const int num_threads) 
         // broadcast n
         MPI_Bcast(&n, 1, MPI_INT, 0, MPI_COMM_WORLD);
         // broadcast B
-        MPI_Bcast(B.data(), n*n, MPI_LONG_DOUBLE, 0, MPI_COMM_WORLD);
+        MPI_Bcast(B.data(), n*n, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
         // divide rows among workers
         const int workers = size - 1;
@@ -64,7 +64,7 @@ void matmul_mpi_distributed(const std::string& data_dir, const int num_threads) 
 
             // send A block
             if (count > 0)
-                MPI_Send(A.data() + offset * n, count, MPI_LONG_DOUBLE, w, 0, MPI_COMM_WORLD);
+                MPI_Send(A.data() + offset * n, count, MPI_DOUBLE, w, 0, MPI_COMM_WORLD);
             offset += rows;
         }
 
@@ -75,12 +75,12 @@ void matmul_mpi_distributed(const std::string& data_dir, const int num_threads) 
             MPI_Recv(&rows, 1, MPI_INT, w, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
             if (const int count = rows * n; count > 0)
-                MPI_Recv(C.data() + offset * n, count, MPI_LONG_DOUBLE, w, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                MPI_Recv(C.data() + offset * n, count, MPI_DOUBLE, w, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             offset += rows;
         }
 
         const auto t1 = std::chrono::high_resolution_clock::now();
-        const std::chrono::duration<long double> dt = t1 - t0;
+        const std::chrono::duration<double> dt = t1 - t0;
 
         std::cout << "[mpi-master] n=" << n << " workers=" << workers << " time=" << dt.count() << "s\n";
 
@@ -97,7 +97,7 @@ void matmul_mpi_distributed(const std::string& data_dir, const int num_threads) 
         int n;
         MPI_Bcast(&n, 1, MPI_INT, 0, MPI_COMM_WORLD);
         DMatrix B(n * n);
-        MPI_Bcast(B.data(), n*n, MPI_LONG_DOUBLE, 0, MPI_COMM_WORLD);
+        MPI_Bcast(B.data(), n*n, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
         int rows;
         MPI_Recv(&rows, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
@@ -105,7 +105,7 @@ void matmul_mpi_distributed(const std::string& data_dir, const int num_threads) 
 
         DMatrix Ablock(count);
         if (count > 0)
-            MPI_Recv(Ablock.data(), count, MPI_LONG_DOUBLE, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            MPI_Recv(Ablock.data(), count, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
         DMatrix Cblock(count);
         if (count > 0)
@@ -114,6 +114,6 @@ void matmul_mpi_distributed(const std::string& data_dir, const int num_threads) 
         // send back rows and result
         MPI_Send(&rows, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
         if (count > 0)
-            MPI_Send(Cblock.data(), count, MPI_LONG_DOUBLE, 0, 0, MPI_COMM_WORLD);
+            MPI_Send(Cblock.data(), count, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
     }
 }

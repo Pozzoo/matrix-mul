@@ -2,7 +2,7 @@
 #include <vector>
 #include <string>
 
-using DMatrix = std::vector<long double>;
+using DMatrix = std::vector<double>;
 
 // read a square matrix from a space-separated text file
 // returns true on success; n is set to matrix dimension (n x n)
