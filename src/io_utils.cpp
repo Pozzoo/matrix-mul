@@ -73,7 +73,7 @@ bool write_square_matrix(const std::string &path, const DMatrix &M, const int n)
             f << std::fixed << std::setprecision(4) << t;
             if (j + 1 < n) f << ' ';
         }
-        if (i + 1 < n) f << "\r\n"; // Windows CRLF, but no trailing newline on the last line
+        f << "\r\n"; // Windows CRLF
     }
 
     return true;
