@@ -6,12 +6,12 @@
 #include <sstream>
 #include <iostream>
 
-bool read_square_matrix(const std::string &path, Matrix &M, int &n) {
+bool read_square_matrix(const std::string &path, DMatrix &M, int &n) {
     std::ifstream f(path, std::ios::binary);  // open binary to preserve BOM
     if (!f.is_open()) return false;
 
     std::string line;
-    std::vector<std::vector<double>> rows;
+    std::vector<std::vector<long double>> rows;
     rows.clear();
     bool first_line = true;
 
@@ -31,8 +31,8 @@ bool read_square_matrix(const std::string &path, Matrix &M, int &n) {
         if (line.empty()) continue; // skip empty lines
 
         std::istringstream ss(line);
-        std::vector<double> cols;
-        double v;
+        std::vector<long double> cols;
+        long double v;
         while (ss >> v) cols.push_back(v);
 
         if (cols.empty()) continue;
@@ -59,24 +59,17 @@ bool read_square_matrix(const std::string &path, Matrix &M, int &n) {
     return true;
 }
 
-double truncate4(const double x) {
-    return std::trunc(x * 10000.0) / 10000.0;
+double truncate8(const double x) {
+    return std::trunc(x * 100000000.0) / 100000000.0;
 }
 
-bool write_square_matrix(const std::string &path, const Matrix &M, const int n) {
+bool write_square_matrix(const std::string &path, const DMatrix &M, const int n) {
     std::ofstream f(path, std::ios::binary | std::ios::trunc);
     if (!f.is_open()) return false;
 
-
-    // Write BOM
-    f.put(static_cast<char>(0xEF));
-    f.put(static_cast<char>(0xBB));
-    f.put(static_cast<char>(0xBF));
-
-
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < n; j++) {
-            const double t = truncate4(M[i*n + j]);
+            const long double t = truncate8(static_cast<double>(M[i*n + j]));
             f << std::fixed << std::setprecision(4) << t;
             if (j + 1 < n) f << ' ';
         }

@@ -1,6 +1,5 @@
 #include <iostream>
 #include <string>
-#include <vector>
 #include <chrono>
 #include <mpi.h>
 #include <thread>
@@ -11,8 +10,6 @@
 
 // declare MPI wrapper
 void matmul_mpi_distributed(const std::string& data_dir, int num_threads);
-
-using Matrix = std::vector<double>;
 
 int main(int argc, char** argv) {
     std::string mode = "linear";
@@ -28,8 +25,8 @@ int main(int argc, char** argv) {
         int na = 0, nb = 0;
         std::string pathA = data_dir + "/matA.txt";
         std::string pathB = data_dir + "/matB.txt";
-        if (Matrix A, B; read_square_matrix(pathA,A,na) && read_square_matrix(pathB,B,nb) && na==nb) {
-            Matrix C;
+        if (DMatrix A, B; read_square_matrix(pathA,A,na) && read_square_matrix(pathB,B,nb) && na==nb) {
+            DMatrix C;
             int nread = na;
 
             C.assign(nread*nread,0.0);
@@ -66,8 +63,8 @@ int main(int argc, char** argv) {
         std::string pathA = data_dir + "/matA.txt";
         std::string pathB = data_dir + "/matB.txt";
 
-        if (Matrix A, B; read_square_matrix(pathA,A,na) && read_square_matrix(pathB,B,nb) && na==nb) {
-            Matrix C;
+        if (DMatrix A, B; read_square_matrix(pathA,A,na) && read_square_matrix(pathB,B,nb) && na==nb) {
+            DMatrix C;
             int nread = na;
 
             C.assign(nread*nread,0.0);

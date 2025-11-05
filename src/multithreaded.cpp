@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <vector>
 
-static void worker_range(const Matrix &A, const Matrix &B, Matrix &C, const int n, const int r0, const int r1) {
+#include "io_utils.h"
+
+static void worker_range(const DMatrix &A, const DMatrix &B, DMatrix &C, const int n, const int r0, const int r1) {
     for (int i = r0; i < r1; i++) {
         for (int k = 0; k < n; k++) {
-            const double a = A[i*n + k];
+            const long double a = A[i*n + k];
             for (int j = 0; j < n; j++) {
                 C[i*n + j] += a * B[k*n + j];
             }
@@ -14,7 +16,7 @@ static void worker_range(const Matrix &A, const Matrix &B, Matrix &C, const int 
     }
 }
 
-void matmul_mt(const Matrix &A, const Matrix &B, Matrix &C, int n, const int num_threads) {
+void matmul_mt(const DMatrix &A, const DMatrix &B, DMatrix &C, int n, const int num_threads) {
     std::ranges::fill(C, 0.0);
 
     if (num_threads <= 1) {

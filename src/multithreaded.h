@@ -1,6 +1,8 @@
 #pragma once
 #include <vector>
 
+#include "io_utils.h"
+
 using Matrix = std::vector<double>;
 
-void matmul_mt(const Matrix &A, const Matrix &B, Matrix &C, int n, int num_threads);
+void matmul_mt(const DMatrix &A, const DMatrix &B, DMatrix &C, int n, int num_threads);
