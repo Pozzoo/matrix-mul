@@ -22,16 +22,22 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Install runtime deps: mpich runtime + sshd + small tooling for host discovery
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        mpich openssh-server ca-certificates dnsutils net-tools iproute2 netcat-openbsd socat \
+        mpich sshpass openssh-server ca-certificates dnsutils net-tools iproute2 netcat-openbsd socat \
       && rm -rf /var/lib/apt/lists/* \
-    mkdir /var/run/sshd /root/.ssh
+      && mkdir -p /var/run/sshd /root/.ssh
 
 # Generate host SSH keys (for sshd)
 RUN ssh-keygen -A
 
-# Generate container's own identity key
-RUN ssh-keygen -t rsa -f /root/.ssh/id_rsa -q -N "" && \
-    cat /root/.ssh/id_rsa.pub >> /root/.ssh/authorized_keys && \
+# Copy pre-generated SSH keys (for inter-container authentication)
+COPY ssh-keys/id_rsa /root/.ssh/id_rsa
+COPY ssh-keys/id_rsa.pub /root/.ssh/id_rsa.pub
+COPY ssh-keys/authorized_keys /root/.ssh/authorized_keys
+
+# Set proper permissions
+RUN chmod 700 /root/.ssh && \
+    chmod 600 /root/.ssh/id_rsa && \
+    chmod 644 /root/.ssh/id_rsa.pub && \
     chmod 600 /root/.ssh/authorized_keys
 
 # Disable strict host checking

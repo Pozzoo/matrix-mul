@@ -6,13 +6,11 @@ SSH_DIR=/root/.ssh
 SSHD=/usr/sbin/sshd
 APP_BIN=/app/matrix-mul
 
-# Ensure SSH keys exist (generate only if missing)
-mkdir -p "$SSH_DIR"
-if [ ! -f "$SSH_DIR/id_rsa" ]; then
-  ssh-keygen -t rsa -N "" -f "$SSH_DIR/id_rsa" >/dev/null 2>&1 || true
-  cat "$SSH_DIR/id_rsa.pub" >> "$SSH_DIR/authorized_keys"
-  chmod 600 "$SSH_DIR/authorized_keys"
-fi
+# SSH keys are already in the image, just ensure proper permissions
+chmod 700 "$SSH_DIR" 2>/dev/null || true
+chmod 600 "$SSH_DIR/id_rsa" 2>/dev/null || true
+chmod 644 "$SSH_DIR/id_rsa.pub" 2>/dev/null || true
+chmod 600 "$SSH_DIR/authorized_keys" 2>/dev/null || true
 
 # start sshd
 mkdir -p /run/sshd
@@ -46,7 +44,7 @@ discover_workers() {
 
   # Start socat in its own session so we can always kill it reliably later.
   # We append replies to tmpfile (one datagram per line).
-  setsid sh -c "while :; do socat -u - UDP4-RECVFROM:${port},reuseaddr,broadcast - | tee -a '${tmpfile}' >/dev/null; done" &
+  setsid sh -c "while :; do socat UDP4-RECVFROM:${port},reuseaddr,broadcast - | tee -a '${tmpfile}' >/dev/null; done" &
   listener_pid=$!
 
   # Give listener a moment to bind
@@ -54,7 +52,7 @@ discover_workers() {
 
   echo "[discovery] broadcasting discovery packet on 192.168.0.255:$port" >&2
   # send our own IP so workers can reply
-  socat -T1 -u - UDP4-DATAGRAM:192.168.0.255:"${port}",broadcast,INTERFACE="${iface}" <<< "DISCOVER_MATRIX_WORKER ${frontend_ip}" >/dev/null 2>&1 || true
+  echo "DISCOVER_MATRIX_WORKER ${frontend_ip}" | socat -T1 - UDP4-DATAGRAM:192.168.0.255:"${port}",broadcast,INTERFACE="${iface}" >/dev/null 2>&1 || true
 
   # Wait explicitly the desired amount of time for replies to arrive
   sleep "${wait_secs}"
@@ -120,13 +118,50 @@ if [ "$MODE" = "mt" ]; then
 fi
 
 if [ "$MODE" = "frontend" ]; then
-  echo "[entry] frontend: waiting ${SLEEP_BEFORE_MPIRUN}s for workers to register"
-  sleep "$SLEEP_BEFORE_MPIRUN"
-
   HF="$(build_hostfile)"
   echo "[entry] hostfile:"
   cat "$HF"
   NUM_HOSTS=$(wc -l < "$HF")
+
+  frontend_ip=$(hostname -I | awk '{print $1}')
+
+  echo "[entry] testing SSH connectivity to all workers..."
+  all_workers_ok=true
+  while read -r worker_ip; do
+    if [ "$worker_ip" != "$frontend_ip" ]; then
+      echo "[entry] waiting for SSH on $worker_ip..."
+      
+      # Wait for SSH to be available on worker (max 30 seconds)
+      ssh_ready=false
+      for i in {1..30}; do
+        if nc -z -w1 "$worker_ip" 22 2>/dev/null; then
+          ssh_ready=true
+          break
+        fi
+        echo "[entry]   attempt $i/30..."
+        sleep 1
+      done
+      
+      if [ "$ssh_ready" = false ]; then
+        echo "[error] SSH not available on $worker_ip after 30 seconds"
+        all_workers_ok=false
+        continue
+      fi
+      
+      # Test SSH connectivity (should work now with shared keys)
+      if ssh -n -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes "root@$worker_ip" "echo 'SSH OK'" >/dev/null 2>&1; then
+        echo "[entry] ✓ SSH to $worker_ip: OK"
+      else
+        echo "[error] ✗ SSH to $worker_ip: FAILED"
+        all_workers_ok=false
+      fi
+    fi
+  done < "$HF"
+
+  if [ "$all_workers_ok" = false ]; then
+    echo "[error] Not all workers are accessible via SSH. MPI may fail."
+    exit 1
+  fi
 
   echo "[entry] launching mpiexec -f $HF -np $NUM_HOSTS ${APP_BIN} --mode mpi --data ${DATA_DIR}"
   mpiexec -f "$HF" -np "$NUM_HOSTS" "$APP_BIN" --mode mpi --data "${DATA_DIR}"
