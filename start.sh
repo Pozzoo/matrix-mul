@@ -41,23 +41,6 @@ sed -i "s/^#*Port .*/Port $SSH_PORT/" /etc/ssh/sshd_config
 mkdir -p /run/sshd
 chmod 755 /run/sshd
 
-# Start sshd in background
-$SSHD -D -e &
-SSHD_PID=$!
-
-# Give it a moment
-sleep 1
-
-# Check if sshd is alive
-if ! kill -0 $SSHD_PID 2>/dev/null; then
-    echo "[error] sshd process died immediately after starting!"
-    echo "[error] Checking port status..." >&2
-    netstat -tuln | grep ':2222' || echo "No SSH ports listening"
-    exit 1
-fi
-
-echo "[entry] sshd started successfully on port $SSH_PORT (PID: $SSHD_PID)"
-
 # env defaults
 MODE=${MODE:-mpi}         # linear | mt | mpi
 DATA_DIR=${DATA_DIR:-/data}
@@ -209,6 +192,23 @@ fi
 echo "[entry] worker container: sshd running on port $SSH_PORT; awaiting mpiexec from frontend"
 
 if [ "${DISCOVERY:-0}" = "1" ]; then
+  # Start sshd in background
+  $SSHD -D -e &
+  SSHD_PID=$!
+
+  # Give it a moment
+  sleep 1
+
+  # Check if sshd is alive
+  if ! kill -0 $SSHD_PID 2>/dev/null; then
+      echo "[error] sshd process died immediately after starting!"
+      echo "[error] Checking port status..." >&2
+      netstat -tuln | grep ':2222' || echo "No SSH ports listening"
+      exit 1
+  fi
+
+  echo "[entry] sshd started successfully on port $SSH_PORT (PID: $SSHD_PID)"
+
   port=4000
   iface=eth0
   echo "[entry] worker: starting UDP discovery responder on ${iface}:${port}"
