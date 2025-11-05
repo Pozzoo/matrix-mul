@@ -22,7 +22,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Install runtime deps: mpich runtime + sshd + small tooling for host discovery
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        mpich sshpass sshd openssh-server ca-certificates dnsutils net-tools iproute2 netcat-openbsd socat \
+        mpich sshpass openssh-server ca-certificates dnsutils net-tools iproute2 netcat-openbsd socat \
       && rm -rf /var/lib/apt/lists/* \
       && mkdir -p /var/run/sshd /root/.ssh
 
