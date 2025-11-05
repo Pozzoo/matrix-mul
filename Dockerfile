@@ -22,7 +22,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Install runtime deps: mpich runtime + sshd + small tooling for host discovery
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        mpich sshpass openssh-server ca-certificates dnsutils net-tools iproute2 netcat-openbsd socat \
+        mpich sshpass sshd openssh-server ca-certificates dnsutils net-tools iproute2 netcat-openbsd socat \
       && rm -rf /var/lib/apt/lists/* \
       && mkdir -p /var/run/sshd /root/.ssh
 
@@ -40,11 +40,14 @@ RUN chmod 700 /root/.ssh && \
     chmod 644 /root/.ssh/id_rsa.pub && \
     chmod 600 /root/.ssh/authorized_keys
 
-# Disable strict host checking
+# Disable strict host checking and set the correct key/port
 RUN echo "Host *" > /root/.ssh/config && \
-    echo "  StrictHostKeyChecking no" >> /root/.ssh/config && \
-    echo "  UserKnownHostsFile /dev/null" >> /root/.ssh/config && \
-    chmod 600 /root/.ssh/config
+    echo "    IdentityFile /root/.ssh/id_rsa" >> /root/.ssh/config && \
+    echo "    IdentitiesOnly yes" >> /root/.ssh/config && \
+    echo "    StrictHostKeyChecking no" >> /root/.ssh/config && \
+    echo "    UserKnownHostsFile /dev/null" >> /root/.ssh/config && \
+    echo "    Port 2222" >> /root/.ssh/config && \
+    chmod 600 /root/.ssh/config \
 
 # Copy app
 WORKDIR /app
@@ -54,4 +57,4 @@ COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
 EXPOSE 22
-ENTRYPOINT ["/app/start.sh"]
+ENTRYPOINT ["bash", "/app/start.sh"]

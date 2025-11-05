@@ -12,14 +12,51 @@ chmod 600 "$SSH_DIR/id_rsa" 2>/dev/null || true
 chmod 644 "$SSH_DIR/id_rsa.pub" 2>/dev/null || true
 chmod 600 "$SSH_DIR/authorized_keys" 2>/dev/null || true
 
-# start sshd
+# Configure sshd properly
 mkdir -p /run/sshd
-if ! grep -q '^PermitRootLogin' /etc/ssh/sshd_config 2>/dev/null; then
+
+SSH_PORT=2222
+
+# Modify sshd_config to ensure correct settings
+if ! grep -q '^PermitRootLogin yes' /etc/ssh/sshd_config 2>/dev/null; then
   echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config
+fi
+if ! grep -q '^PasswordAuthentication no' /etc/ssh/sshd_config 2>/dev/null; then
   echo 'PasswordAuthentication no' >> /etc/ssh/sshd_config
+fi
+if ! grep -q '^PubkeyAuthentication yes' /etc/ssh/sshd_config 2>/dev/null; then
+  echo 'PubkeyAuthentication yes' >> /etc/ssh/sshd_config
+fi
+if ! grep -q '^AuthorizedKeysFile' /etc/ssh/sshd_config 2>/dev/null; then
+  echo 'AuthorizedKeysFile /root/.ssh/authorized_keys' >> /etc/ssh/sshd_config
+fi
+if ! grep -q '^UseDNS no' /etc/ssh/sshd_config 2>/dev/null; then
   echo 'UseDNS no' >> /etc/ssh/sshd_config
 fi
-$SSHD
+
+# Set the port
+sed -i "s/^#*Port .*/Port $SSH_PORT/" /etc/ssh/sshd_config
+
+# Ensure /run/sshd exists
+mkdir -p /run/sshd
+chmod 755 /run/sshd
+
+# Start sshd in background
+$SSHD -D -e &
+SSHD_PID=$!
+
+# Give it a moment
+sleep 1
+
+# Check if sshd is alive
+if ! kill -0 $SSHD_PID 2>/dev/null; then
+    echo "[error] sshd process died immediately after starting!"
+    echo "[error] Checking port status..." >&2
+    netstat -tuln | grep ':2222' || echo "No SSH ports listening"
+    exit 1
+fi
+
+echo "[entry] sshd started successfully on port $SSH_PORT (PID: $SSHD_PID)"
 
 # env defaults
 MODE=${MODE:-mpi}         # linear | mt | mpi
@@ -30,7 +67,7 @@ SLEEP_BEFORE_MPIRUN=${SLEEP_BEFORE_MPIRUN:-1}
 # discover workers via UDP broadcast
 discover_workers() {
   local port=${DISCOVERY_PORT:-4000}
-  local wait_secs=${DISCOVERY_TIMEOUT:-10}   # change default wait time here
+  local wait_secs=${DISCOVERY_TIMEOUT:-10}
   local tmpfile
   tmpfile=$(mktemp)
 
@@ -42,24 +79,17 @@ discover_workers() {
   echo "[discovery] using interface: $iface" >&2
   echo "[discovery] starting listener on UDP port $port for ${wait_secs}s..." >&2
 
-  # Start socat in its own session so we can always kill it reliably later.
-  # We append replies to tmpfile (one datagram per line).
   setsid sh -c "while :; do socat UDP4-RECVFROM:${port},reuseaddr,broadcast - | tee -a '${tmpfile}' >/dev/null; done" &
   listener_pid=$!
 
-  # Give listener a moment to bind
   sleep 0.2
 
   echo "[discovery] broadcasting discovery packet on 192.168.0.255:$port" >&2
-  # send our own IP so workers can reply
   echo "DISCOVER_MATRIX_WORKER ${frontend_ip}" | socat -T1 - UDP4-DATAGRAM:192.168.0.255:"${port}",broadcast,INTERFACE="${iface}" >/dev/null 2>&1 || true
 
-  # Wait explicitly the desired amount of time for replies to arrive
   sleep "${wait_secs}"
 
-  # Cleanly kill the listener session (kill the whole process group)
   if kill -0 "$listener_pid" 2>/dev/null; then
-    # negative PID kills process group started by setsid
     pgid=$(ps -o pgid= -p "$listener_pid" | tr -d ' ')
     if [ -n "$pgid" ]; then
       kill -TERM -"${pgid}" 2>/dev/null || true
@@ -68,12 +98,10 @@ discover_workers() {
     fi
   fi
 
-  # Wait for listener to exit
   wait "$listener_pid" 2>/dev/null || true
 
   echo "[discovery] checking replies..." >&2
 
-  # Filter out self-echo, print workers if present
   workers=$(awk -v self="$frontend_ip" '/WORKER / && $2 != self {print $2}' "$tmpfile" | sort -u)
 
   if [ -n "$workers" ]; then
@@ -129,30 +157,34 @@ if [ "$MODE" = "frontend" ]; then
   all_workers_ok=true
   while read -r worker_ip; do
     if [ "$worker_ip" != "$frontend_ip" ]; then
-      echo "[entry] waiting for SSH on $worker_ip..."
+      echo "[entry] checking SSH connectivity to $worker_ip..."
+      
+      ssh_port=2222
       
       # Wait for SSH to be available on worker (max 30 seconds)
       ssh_ready=false
       for i in {1..30}; do
-        if nc -z -w1 "$worker_ip" 22 2>/dev/null; then
+        if nc -z -w1 "$worker_ip" "$ssh_port" 2>/dev/null; then
           ssh_ready=true
+          echo "[entry]   SSH port $ssh_port is open on $worker_ip"
           break
         fi
-        echo "[entry]   attempt $i/30..."
+        echo "[entry]   waiting for SSH on $worker_ip:$ssh_port (attempt $i/30)..."
         sleep 1
       done
       
       if [ "$ssh_ready" = false ]; then
-        echo "[error] SSH not available on $worker_ip after 30 seconds"
+        echo "[error] SSH port not available on $worker_ip after 30 seconds"
         all_workers_ok=false
         continue
       fi
       
-      # Test SSH connectivity (should work now with shared keys)
-      if ssh -n -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes "root@$worker_ip" "echo 'SSH OK'" >/dev/null 2>&1; then
-        echo "[entry] ✓ SSH to $worker_ip: OK"
+      # Test SSH authentication (should work now with shared keys)
+      echo "[entry] testing SSH authentication to $worker_ip:$ssh_port..."
+      if ssh -n -p "$ssh_port" -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes "root@$worker_ip" "echo 'SSH OK'" >/dev/null 2>&1; then
+        echo "[entry] ✓ SSH to $worker_ip:$ssh_port: OK"
       else
-        echo "[error] ✗ SSH to $worker_ip: FAILED"
+        echo "[error] ✗ SSH to $worker_ip:$ssh_port: FAILED"
         all_workers_ok=false
       fi
     fi
@@ -163,8 +195,10 @@ if [ "$MODE" = "frontend" ]; then
     exit 1
   fi
 
+  echo "[entry] all workers are accessible via SSH ✓"
   echo "[entry] launching mpiexec -f $HF -np $NUM_HOSTS ${APP_BIN} --mode mpi --data ${DATA_DIR}"
-  mpiexec -f "$HF" -np "$NUM_HOSTS" "$APP_BIN" --mode mpi --data "${DATA_DIR}"
+  mpiexec -f /tmp/hostfile -np "$NUM_HOSTS" /app/matrix-mul --mode mpi --data /data
+
 
   echo "[entry] mpiexec finished"
   sleep 1
@@ -172,7 +206,7 @@ if [ "$MODE" = "frontend" ]; then
 fi
 
 # Worker containers
-echo "[entry] worker container: sshd running; awaiting mpiexec from frontend"
+echo "[entry] worker container: sshd running on port $SSH_PORT; awaiting mpiexec from frontend"
 
 if [ "${DISCOVERY:-0}" = "1" ]; then
   port=4000
@@ -182,8 +216,8 @@ if [ "${DISCOVERY:-0}" = "1" ]; then
   responder_script=$(mktemp)
   cat > "$responder_script" <<'EOF'
 #!/usr/bin/env bash
-set +u  # disable unbound variable errors here
-msg=$(cat)  # read entire datagram from stdin
+set +u
+msg=$(cat)
 if echo "$msg" | grep -q "^DISCOVER_MATRIX_WORKER"; then
   sender_ip=$(echo "$msg" | awk '{print $2}')
   my_ip=$(hostname -I | awk '{print $1}')
@@ -193,9 +227,7 @@ fi
 EOF
   chmod +x "$responder_script"
 
-  # Now start socat using the script
   socat -u UDP4-RECVFROM:"$port",reuseaddr,broadcast,INTERFACE="${iface}" SYSTEM:"$responder_script" &
 fi
-
 
 tail -f /dev/null
