@@ -47,7 +47,7 @@ RUN echo "Host *" > /root/.ssh/config && \
     echo "    StrictHostKeyChecking no" >> /root/.ssh/config && \
     echo "    UserKnownHostsFile /dev/null" >> /root/.ssh/config && \
     echo "    Port 2222" >> /root/.ssh/config && \
-    chmod 600 /root/.ssh/config \
+    chmod 600 /root/.ssh/config
 
 # Copy app
 WORKDIR /app
