@@ -46,7 +46,7 @@ discover_workers() {
 
   # Start socat in its own session so we can always kill it reliably later.
   # We append replies to tmpfile (one datagram per line).
-  setsid sh -c "while :; do socat -u - UDP4-RECVFROM:${port},reuseaddr,broadcast,INTERFACE=${iface} - 2>/dev/null >>'${tmpfile}'; done" &
+  setsid sh -c "while :; do socat -u - UDP4-RECVFROM:${port},reuseaddr,broadcast - | tee -a '${tmpfile}' >/dev/null; done" &
   listener_pid=$!
 
   # Give listener a moment to bind
@@ -76,7 +76,7 @@ discover_workers() {
   echo "[discovery] checking replies..." >&2
 
   # Filter out self-echo, print workers if present
-  workers=$(awk -v self="$frontend_ip" '/^DISCOVER_MATRIX_WORKER / && $2 != self {print $2}' "$tmpfile" | sort -u)
+  workers=$(awk -v self="$frontend_ip" '/WORKER / && $2 != self {print $2}' "$tmpfile" | sort -u)
 
   if [ -n "$workers" ]; then
     echo "[discovery] received replies:" >&2
